@@ -2,35 +2,37 @@
 
 Simple webpage for LAN control of a Novus N20K48 over wifi using the CG-WiFi module.
 
-The CG WiFi module bridges the inverter's RS485/Modbus interface to the
-network as Modbus TCP. This project polls it, stores history, and serves a
-small dashboard: live readings, a history chart per reading, and a
-control panel for writeable registers (on/off, setpoints, mode selects).
+The N20K48 is a Novus modular process/PID controller. The CG WiFi module
+bridges its RS485/Modbus RTU interface to the network. This project polls
+it, stores history, and serves a small dashboard: live readings, a history
+chart per reading, and a control panel for writeable registers (run/stop,
+setpoint, output power, mode selects, PID tuning, alarm 1, etc).
 
-## Before this will do anything useful
+## Register map
 
-**`app/registers.yaml` is a placeholder.** Novus doesn't publish a public
-Modbus register map for the N20K48, so the addresses in that file are
-stand-ins, not real ones. The app, API, and UI are all generated from that
-file, so once you have the real register map you only need to edit YAML —
-no code changes.
+`app/registers.yaml` is transcribed from Novus's own
+`communication_protocol_n20k48_v10x_a_en.pdf` (protocol v1.0x A) — real
+addresses, not guesses. A few values (noted inline as `ASSUMPTION` in the
+YAML comments) fill in decimal scaling the doc doesn't spell out for every
+register; double-check those against what the device's own display shows
+once you're connected. Ramps & Soaks programs, alarms 2-4, and a handful of
+lower-priority config registers are documented in the PDF but not wired
+into the YAML — see the comment block at the bottom of the file for what's
+left out and why. The app, API, and UI are all generated from this file, so
+extending it (e.g. adding alarm 2-4) is a YAML edit, not a code change.
 
-To find the real addresses:
-- Ask Novus support or your installer for the Modbus/RS485 register table.
-- Capture traffic between the vendor's phone app and the module while
-  changing settings, and match reads/writes to what changes.
-- Probe common holding-register ranges with a Modbus tool (e.g.
-  `pymodbus.console`, `modpoll`) and correlate values against the
-  inverter's own display.
-
-See the comments in `app/registers.yaml` for the field format.
+One protocol wrinkle worth knowing: the device natively speaks Modbus RTU
+over RS485, and only supports function codes 03/05/06/16 (no input
+registers). Some cheap RS485-to-WiFi bridges forward raw RTU frames over a
+plain TCP socket instead of real MBAP-framed Modbus TCP. If the module
+accepts the TCP connection but every read/write fails, that's the likely
+cause — the client would need to be switched to RTU-over-TCP framing.
 
 ## Running
 
 ```
 cp .env.example .env
-# edit .env with your CG WiFi module's IP, and app/registers.yaml with real
-# register addresses
+# edit .env with your CG WiFi module's IP
 docker compose up --build
 ```
 

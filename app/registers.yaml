@@ -1,119 +1,475 @@
-# Modbus register map for the Novus N20K48 (via the CG WiFi module).
+# Modbus register map for the Novus N20K48 modular controller, taken from
+# communication_protocol_n20k48_v10x_a_en.pdf (Novus Automation, protocol
+# v1.0x A). All addresses/enums below are transcribed directly from that
+# doc's Registers Table (§2) and Status Words (§3) unless marked ASSUMPTION.
 #
-# !!! PLACEHOLDER FILE !!!
-# The addresses below are NOT real — Novus doesn't publish a public Modbus
-# register map for this unit, so every "address:" here is a stand-in you
-# must replace. Ways to find the real values:
-#   1. Ask Novus support / your installer for the Modbus/RS485 register
-#      table for the N20K48 + CG WiFi module.
-#   2. Capture traffic between the vendor's phone app and the module while
-#      it's connected to the inverter, and match reads/writes to values you
-#      see change in the app.
-#   3. Scan common holding-register ranges with a Modbus tool (e.g.
-#      `pymodbus.console` or `modpoll`) and correlate values you get back
-#      with what the inverter's own display shows.
-#
-# Once you know the real addresses, edit this file — no code changes are
-# needed. The web UI and API are entirely generated from this list.
-#
-# Field reference:
-#   key        - internal id, used in the API and history DB (no spaces)
-#   label      - display name in the UI
-#   type       - "holding" (function code 3) or "input" (function code 4)
-#                for readings; "holding" or "coil" for controls
-#   data_type  - uint16 | int16 | uint32 | int32 (32-bit values consume two
-#                registers starting at "address")
-#   scale      - raw register value is multiplied by this to get the
-#                displayed value (e.g. 0.1 if the device reports tenths)
-#   unit       - display suffix, purely cosmetic
+# Protocol notes from the doc that affect this client:
+#   - Only Modbus commands 03 (Read Holding Register), 05 (Force Single
+#     Coil), 06 (Preset Single Register), 16 (Preset Multiple Register) are
+#     supported. There is no function 04 (Read Input Register) or 02/01
+#     (read coil/discrete) — every "reading" below is therefore `type:
+#     holding`, never `input`.
+#   - Coil addresses (function 05) are a SEPARATE address space from
+#     holding registers — coil address 0 is not the same thing as holding
+#     register address 0. Coil writes only work for outputs configured as
+#     "Coil" in the device's I/O setup (see out_a_pulse_coil /
+#     out_b_relay_coil below).
+#   - All registers are 16-bit. Where the doc lists a "_HI" / "_LO" pair
+#     for one description, that's a 32-bit value split across two
+#     consecutive registers (modeled here as data_type uint32/int32).
+#   - The base protocol is Modbus RTU over RS485; the CG WiFi module
+#     bridges that to the network. Some cheap RS485-WiFi bridges forward
+#     raw RTU frames over a plain TCP socket rather than real Modbus TCP
+#     (MBAP-framed). If reads/writes fail with framing-looking errors even
+#     though the socket connects, that's the likely cause — ask if you'd
+#     like the client switched to RTU-over-TCP framing.
 
 readings:
-  - key: battery_voltage
-    label: "Battery Voltage"
-    address: 0 # TODO: replace with real register address
+  - key: device_id
+    label: "Device ID"
+    address: 0
     type: holding
     data_type: uint16
-    scale: 0.1
-    unit: "V"
+    scale: 1
+    unit: ""
 
-  - key: battery_current
-    label: "Battery Current"
-    address: 1 # TODO
+  - key: fw_version
+    label: "Firmware Version"
+    address: 1
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+
+  - key: serial_number
+    label: "Serial Number"
+    address: 3 # spans 3-4 (INFO_SERIAL_NUM_HI/LO)
+    type: holding
+    data_type: uint32
+    scale: 1
+    unit: ""
+
+  - key: status_word_1
+    label: "Status Word 1 (bitmask)"
+    address: 19
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+    # Bit meanings: pulse/relay output enabled, analog input OK, USB/BLE
+    # connected, power supply connected, process 1/2 enabled, network
+    # frequency, system error. See protocol doc §3.1 Table 2.
+
+  - key: status_word_3
+    label: "Status Word 3 - Process 1 (bitmask)"
+    address: 21
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+    # Bits include: alarm 1-4 enabled, run, control mode, auto-tuning,
+    # control action, °C/°F, open sensor / overflow / underflow / Pt100 /
+    # cold junction / internal error flags. See protocol doc §3.1 Table 2.
+
+  - key: cold_junction_temp
+    label: "Cold Junction Temperature"
+    address: 28
     type: holding
     data_type: int16
-    scale: 0.1
-    unit: "A"
+    scale: 0.1 # ASSUMPTION: not stated explicitly in the doc; matches the
+    unit: "°C" # x10 convention used for PV1/temperature elsewhere.
 
-  - key: battery_soc
-    label: "Battery SOC"
-    address: 2 # TODO
+  - key: sys_error
+    label: "System Error (bitmask)"
+    address: 32 # spans 32-33 (INFO_SYS_ERROR_HI/LO)
+    type: holding
+    data_type: uint32
+    scale: 1
+    unit: ""
+    # See protocol doc §3.3 Table 5 for bit -> error mapping.
+
+  - key: ai_diag
+    label: "Analog Input Diagnostics (bitmask)"
+    address: 88
     type: holding
     data_type: uint16
     scale: 1
-    unit: "%"
+    unit: ""
+    # Bits 8-12: open input, above/below operating limit, cold junction
+    # error, Pt100 error. See protocol doc §2.
 
-  - key: pv_power
-    label: "PV Power"
-    address: 3 # TODO
-    type: holding
-    data_type: uint16
-    scale: 1
-    unit: "W"
-
-  - key: load_power
-    label: "Load Power"
-    address: 4 # TODO
-    type: holding
-    data_type: uint16
-    scale: 1
-    unit: "W"
-
-  - key: grid_power
-    label: "Grid Power"
-    address: 5 # TODO
+  - key: process_variable
+    label: "Process Variable (PV)"
+    address: 201
     type: holding
     data_type: int16
-    scale: 1
-    unit: "W"
-
-  - key: temperature
-    label: "Temperature"
-    address: 6 # TODO
-    type: holding
-    data_type: int16
+    # Per the doc: "For temperature readings, the value will always be
+    # multiplied by 10, regardless of the dPPo value." For linear inputs
+    # the true decimal position comes from INPUT_DPPO (address 279:
+    # 0=XXXX, 1=XXX.X, 2=XX.XX, 3=X.XXX) instead of this fixed scale.
     scale: 0.1
-    unit: "°C"
+    unit: ""
 
 controls:
-  - key: output_enable
-    label: "Output Enable"
-    address: 100 # TODO: replace with real register/coil address
-    type: coil
-    control_type: toggle
-
-  - key: charge_current_limit
-    label: "Charge Current Limit"
-    address: 101 # TODO
+  # --- Primary run/mode controls ---
+  - key: control_run
+    label: "Run"
+    address: 214 # CTRL_RUN
     type: holding
-    control_type: number
+    control_type: toggle
     data_type: uint16
-    scale: 1
-    min: 0
-    max: 100
-    step: 1
-    unit: "A"
 
-  - key: work_mode
-    label: "Work Mode"
-    address: 102 # TODO
+  - key: control_mode
+    label: "Control Mode"
+    address: 213 # CTRL_AUTO
     type: holding
     control_type: select
     data_type: uint16
-    scale: 1
     options:
       - value: 0
-        label: "Battery First"
+        label: "Manual"
       - value: 1
-        label: "Grid First"
+        label: "Automatic"
+
+  - key: control_action
+    label: "Control Action"
+    address: 212 # CTRL_ACT
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - value: 0
+        label: "Inverse"
+      - value: 1
+        label: "Direct"
+
+  - key: setpoint
+    label: "Setpoint (SP)"
+    address: 200 # CTRL_SP
+    type: holding
+    control_type: number
+    data_type: int16
+    scale: 0.1 # ASSUMPTION: matches the PV's x10 temperature scaling; the
+    unit: "" # doc only specifies SP's *range* (CTRL_SPLL..CTRL_SPHL), not
+    # its decimal scale. Device clamps out-of-range writes automatically.
+
+  - key: output_power
+    label: "Output Power (MV)"
+    address: 202 # CTRL_MV1
+    type: holding
+    control_type: number
+    data_type: int16
+    scale: 0.1
+    min: 0
+    max: 100
+    step: 0.1
+    unit: "%"
+
+  # --- Remote setpoint ---
+  - key: remote_setpoint_enable
+    label: "Remote Setpoint Enable"
+    address: 210 # CTRL_REMOTE_SP_EN
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  - key: remote_setpoint
+    label: "Remote Setpoint"
+    address: 211 # CTRL_REMOTE_SP
+    type: holding
+    control_type: number
+    data_type: int16
+    scale: 0.1 # ASSUMPTION, see `setpoint` above
+    unit: ""
+
+  # --- PID tuning ---
+  - key: auto_tune
+    label: "Auto-Tuning Mode"
+    address: 257 # TUNE_AUTO
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - value: 0
+        label: "Off"
+      - value: 1
+        label: "Fast auto-tuning"
       - value: 2
-        label: "Solar First"
+        label: "Precise auto-tuning"
+      - value: 3
+        label: "Self-adaptive + precise tuning"
+      - value: 4
+        label: "Force new precise + self-adaptive tuning"
+      - value: 5
+        label: "Force new precise + auto-tuning on run/power-on"
+
+  - key: tune_proportional_band
+    label: "Proportional Band"
+    address: 258 # TUNE_PB
+    type: holding
+    control_type: number
+    data_type: uint16
+    min: 0
+    max: 5000
+    step: 1
+    unit: ""
+
+  - key: tune_integral_rate
+    label: "Integral Rate"
+    address: 259 # TUNE_IR
+    type: holding
+    control_type: number
+    data_type: uint16
+    min: 0
+    max: 2400
+    step: 1
+    unit: "rep/min"
+
+  - key: tune_derivative_time
+    label: "Derivative Time"
+    address: 260 # TUNE_DT
+    type: holding
+    control_type: number
+    data_type: uint16
+    min: 0
+    max: 2400
+    step: 1
+    unit: "s"
+
+  - key: tune_pwm_cycle
+    label: "PWM Cycle Period"
+    address: 261 # TUNE_CT
+    type: holding
+    control_type: number
+    data_type: uint16
+    min: 5
+    max: 1000
+    step: 1
+    unit: "s"
+
+  # --- Output limits / soft start ---
+  - key: output_lower_limit
+    label: "Output Lower Limit"
+    address: 224 # CTRL_OULL
+    type: holding
+    control_type: number
+    data_type: int16
+    min: -1000
+    max: 1000
+    step: 1
+    unit: ""
+
+  - key: output_upper_limit
+    label: "Output Upper Limit"
+    address: 225 # CTRL_OUHL
+    type: holding
+    control_type: number
+    data_type: int16
+    min: -1000
+    max: 1000
+    step: 1
+    unit: ""
+
+  - key: soft_start_time
+    label: "Soft Start Time"
+    address: 226 # CTRL_SFST
+    type: holding
+    control_type: number
+    data_type: uint16
+    min: 0
+    max: 9999
+    step: 1
+    unit: "s"
+
+  # --- Analog input configuration ---
+  - key: ai_enable
+    label: "Analog Input Enable"
+    address: 74 # AI_ENABLE
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  - key: ai_type
+    label: "Analog Input Sensor Type"
+    address: 75 # AI_TYPE
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - { value: 0, label: "T/C J" }
+      - { value: 1, label: "T/C K" }
+      - { value: 2, label: "T/C T" }
+      - { value: 3, label: "T/C N" }
+      - { value: 4, label: "T/C R" }
+      - { value: 5, label: "T/C S" }
+      - { value: 6, label: "T/C B" }
+      - { value: 7, label: "T/C E" }
+      - { value: 8, label: "Pt100" }
+      - { value: 9, label: "0-20 mA" }
+      - { value: 10, label: "4-20 mA" }
+      - { value: 11, label: "0-50 mV" }
+      - { value: 12, label: "0-5 V" }
+      - { value: 13, label: "0-10 V" }
+
+  - key: ai_unit
+    label: "Temperature Unit"
+    address: 77 # AI_UNIT
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - value: 0
+        label: "°C"
+      - value: 1
+        label: "°F"
+
+  - key: ai_filter
+    label: "Analog Input Filter"
+    address: 76 # AI_FILTER
+    type: holding
+    control_type: number
+    data_type: uint16
+    scale: 0.1
+    min: 0
+    max: 6553.5
+    step: 0.1
+    unit: "s"
+
+  - key: ai_grid_freq
+    label: "Network Frequency"
+    address: 87 # AI_GRID_FREQ
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - value: 0
+        label: "50 Hz"
+      - value: 1
+        label: "60 Hz"
+
+  # --- Digital outputs (pulse / relay), holding-register access ---
+  - key: pulse_output_enable
+    label: "Pulse Output Enable"
+    address: 110 # PULSE_ENABLE
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  - key: relay_output_enable
+    label: "Relay Output Enable"
+    address: 111 # RELAY_ENABLE
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  - key: pulse_state
+    label: "Pulse Output State"
+    address: 112 # PULSE_STATE
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  - key: relay_state
+    label: "Relay Output State"
+    address: 113 # RELAY_STATE
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  # --- Digital outputs, coil access (function code 05) ---
+  # Per the doc, these only work if the output is configured as "Coil" in
+  # the device's I/O setup — otherwise use pulse_state/relay_state above.
+  - key: out_a_pulse_coil
+    label: "Out.A (Pulse) - Coil"
+    address: 0
+    type: coil
+    control_type: toggle
+
+  - key: out_b_relay_coil
+    label: "Out.B (Relay) - Coil"
+    address: 1
+    type: coil
+    control_type: toggle
+
+  # --- Bluetooth ---
+  - key: bluetooth_enable
+    label: "Bluetooth Enable"
+    address: 143 # BLE_EN
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+  # --- HMI remote control ---
+  - key: ihm_command
+    label: "Send HMI Command"
+    address: 63 # IHM_COMMAND
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - value: 1
+        label: "Next screen"
+      - value: 2
+        label: "Increase value"
+      - value: 4
+        label: "Decrease value"
+      - value: 8
+        label: "Previous screen"
+      - value: 16
+        label: "Next cycle"
+
+  # --- Alarm 1 (setpoint/function/hysteresis/block) ---
+  # Alarms 2-4 follow the identical pattern at base addresses 319, 328,
+  # 337 (FUAx/SPAx/HYAx/BLAx) — duplicate this block with those addresses
+  # if you want them in the UI. Per-alarm timers (T1Ax/T2Ax/LBDTx) and
+  # flash indication (FLSHx) are in the doc but omitted here for brevity.
+  - key: alarm1_function
+    label: "Alarm 1 Function"
+    address: 310 # FUA1
+    type: holding
+    control_type: select
+    data_type: uint16
+    options:
+      - { value: 0, label: "Off" }
+      - { value: 1, label: "Low" }
+      - { value: 2, label: "High" }
+      - { value: 3, label: "Deviation" }
+      - { value: 4, label: "Low deviation" }
+      - { value: 5, label: "High deviation" }
+      - { value: 6, label: "Loop break error" }
+      - { value: 7, label: "Rate of change" }
+      - { value: 8, label: "End of timer" }
+      - { value: 9, label: "Loop break detection" }
+
+  - key: alarm1_setpoint
+    label: "Alarm 1 Setpoint"
+    address: 311 # SPA1
+    type: holding
+    control_type: number
+    data_type: int16
+    unit: ""
+
+  - key: alarm1_hysteresis
+    label: "Alarm 1 Hysteresis"
+    address: 312 # HYA1
+    type: holding
+    control_type: number
+    data_type: uint16
+    unit: ""
+
+  - key: alarm1_initial_block
+    label: "Alarm 1 Initial Block"
+    address: 313 # BLA1
+    type: holding
+    control_type: toggle
+    data_type: uint16
+
+# Not modeled here, but present in the protocol doc if you need them:
+#   - Ramps & Soaks programs (20 program slots, addresses 400-1189) -
+#     each program has ~9 segments with time/setpoint/event fields.
+#   - Timer 1/2 configuration (addresses 296-305).
+#   - Bluetooth device name (SSID01-04, addresses 129-132).
+#   - Peripheral descriptor / hardware inventory (addresses 23-24,
+#     decode per §3.2 Table 4).
+#   - AI_LL/AI_HL/AI_OFFST_* operating-limit registers (addresses 78-81,
+#     103-106).
