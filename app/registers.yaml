@@ -1,0 +1,119 @@
+# Modbus register map for the Novus N20K48 (via the CG WiFi module).
+#
+# !!! PLACEHOLDER FILE !!!
+# The addresses below are NOT real — Novus doesn't publish a public Modbus
+# register map for this unit, so every "address:" here is a stand-in you
+# must replace. Ways to find the real values:
+#   1. Ask Novus support / your installer for the Modbus/RS485 register
+#      table for the N20K48 + CG WiFi module.
+#   2. Capture traffic between the vendor's phone app and the module while
+#      it's connected to the inverter, and match reads/writes to values you
+#      see change in the app.
+#   3. Scan common holding-register ranges with a Modbus tool (e.g.
+#      `pymodbus.console` or `modpoll`) and correlate values you get back
+#      with what the inverter's own display shows.
+#
+# Once you know the real addresses, edit this file — no code changes are
+# needed. The web UI and API are entirely generated from this list.
+#
+# Field reference:
+#   key        - internal id, used in the API and history DB (no spaces)
+#   label      - display name in the UI
+#   type       - "holding" (function code 3) or "input" (function code 4)
+#                for readings; "holding" or "coil" for controls
+#   data_type  - uint16 | int16 | uint32 | int32 (32-bit values consume two
+#                registers starting at "address")
+#   scale      - raw register value is multiplied by this to get the
+#                displayed value (e.g. 0.1 if the device reports tenths)
+#   unit       - display suffix, purely cosmetic
+
+readings:
+  - key: battery_voltage
+    label: "Battery Voltage"
+    address: 0 # TODO: replace with real register address
+    type: holding
+    data_type: uint16
+    scale: 0.1
+    unit: "V"
+
+  - key: battery_current
+    label: "Battery Current"
+    address: 1 # TODO
+    type: holding
+    data_type: int16
+    scale: 0.1
+    unit: "A"
+
+  - key: battery_soc
+    label: "Battery SOC"
+    address: 2 # TODO
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: "%"
+
+  - key: pv_power
+    label: "PV Power"
+    address: 3 # TODO
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: "W"
+
+  - key: load_power
+    label: "Load Power"
+    address: 4 # TODO
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: "W"
+
+  - key: grid_power
+    label: "Grid Power"
+    address: 5 # TODO
+    type: holding
+    data_type: int16
+    scale: 1
+    unit: "W"
+
+  - key: temperature
+    label: "Temperature"
+    address: 6 # TODO
+    type: holding
+    data_type: int16
+    scale: 0.1
+    unit: "°C"
+
+controls:
+  - key: output_enable
+    label: "Output Enable"
+    address: 100 # TODO: replace with real register/coil address
+    type: coil
+    control_type: toggle
+
+  - key: charge_current_limit
+    label: "Charge Current Limit"
+    address: 101 # TODO
+    type: holding
+    control_type: number
+    data_type: uint16
+    scale: 1
+    min: 0
+    max: 100
+    step: 1
+    unit: "A"
+
+  - key: work_mode
+    label: "Work Mode"
+    address: 102 # TODO
+    type: holding
+    control_type: select
+    data_type: uint16
+    scale: 1
+    options:
+      - value: 0
+        label: "Battery First"
+      - value: 1
+        label: "Grid First"
+      - value: 2
+        label: "Solar First"

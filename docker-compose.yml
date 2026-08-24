@@ -1,0 +1,18 @@
+services:
+  novus-control:
+    build: ./app
+    ports:
+      - "${HTTP_PORT:-8080}:8000"
+    environment:
+      MODBUS_HOST: ${MODBUS_HOST}
+      MODBUS_PORT: ${MODBUS_PORT:-502}
+      MODBUS_UNIT_ID: ${MODBUS_UNIT_ID:-1}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+      DB_PATH: /data/novus.db
+    volumes:
+      - ./app/registers.yaml:/app/registers.yaml:ro
+      - novus-data:/data
+    restart: unless-stopped
+
+volumes:
+  novus-data:

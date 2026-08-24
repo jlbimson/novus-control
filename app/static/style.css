@@ -1,0 +1,218 @@
+:root {
+  color-scheme: light dark;
+  --bg: #10141a;
+  --panel: #1a2029;
+  --border: #2a323f;
+  --text: #e6e9ef;
+  --muted: #8b93a1;
+  --accent: #4f9dff;
+  --good: #3ec97a;
+  --bad: #e5534b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { font-size: 1.2rem; margin: 0; }
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+h2 {
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 1.5rem 0 0.75rem;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-ok .dot { background: var(--good); }
+.status-bad .dot { background: var(--bad); }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.card:hover { border-color: var(--accent); }
+.card.selected { border-color: var(--accent); }
+
+.card .label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.card .value {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-top: 0.2rem;
+}
+
+.card .value .unit {
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 0.2rem;
+}
+
+#chart-section canvas {
+  width: 100%;
+  height: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.range-buttons {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.range-buttons button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.range-buttons button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.control-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.control {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.control .label { font-size: 0.9rem; }
+
+.control .input-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch input { opacity: 0; width: 0; height: 0; }
+
+.switch .slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  top: 3px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: transform 0.15s;
+}
+
+.switch input:checked + .slider { background: var(--accent); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+
+.control input[type="number"] {
+  width: 80px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+}
+
+.control select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+}
+
+.control button.apply {
+  background: var(--accent);
+  border: none;
+  color: #0b1220;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.control .status-msg {
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-width: 3.5em;
+}
