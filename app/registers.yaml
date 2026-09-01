@@ -116,8 +116,33 @@ readings:
     data_type: uint16
     scale: 1
     unit: ""
-    # Range 0-20. Only meaningful when rs_prog_type = 2 (Ramps and Soaks
-    # program); 0 means no program is currently selected/executing.
+    # Range 0-20. When rs_prog_type = 2 this selects which of the 20 program
+    # slots is executing. Confirmed live (2026-09-01) that it also has to be
+    # written to 1 to actually ARM/start execution when rs_prog_type = 1
+    # (Ramp to Soak) - writing CTRL_RUN alone does nothing in that mode.
+
+  - key: rs_tbas
+    label: "Program Time Base"
+    address: 252 # RS_TBAS
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+    # 0 = Seconds, 1 = Minutes. Shared unit for rs_max_rate and
+    # rs_timer_soak. The presets feature always sets this to 1 (minutes)
+    # before starting a run, since seconds only allows ~2.7h max.
+
+  - key: rs_timer_soak
+    label: "Soak Duration"
+    address: 256 # RS_TIMER_SOAK
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+    # Soak (hold-at-setpoint) duration, in rs_tbas units. This is what the
+    # presets feature writes for a preset's duration_hours (converted to
+    # minutes) - the actual total run time is somewhat longer since it
+    # doesn't include the ramp-up segment before the soak begins.
 
   - key: rs_seg
     label: "Program Segment"

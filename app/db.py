@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS active_run (
 );
 """
 
-_PRESET_COLUMNS = ["id", "name", "setpoint", "duration_hours", "created_at", "updated_at"]
+_PRESET_COLUMNS = ["id", "name", "folder", "setpoint", "duration_hours", "created_at", "updated_at"]
 _ACTIVE_RUN_COLUMNS = ["preset_id", "preset_name", "setpoint", "duration_hours", "started_at"]
 
 
@@ -45,6 +45,9 @@ def init_db():
     conn = _connect()
     try:
         conn.executescript(_SCHEMA)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(presets)")}
+        if "folder" not in cols:
+            conn.execute("ALTER TABLE presets ADD COLUMN folder TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -99,14 +102,14 @@ def get_preset(preset_id: int):
         conn.close()
 
 
-def create_preset(name: str, setpoint: float, duration_hours: float) -> int:
+def create_preset(name: str, folder: str | None, setpoint: float, duration_hours: float) -> int:
     now = time.time()
     conn = _connect()
     try:
         cur = conn.execute(
-            "INSERT INTO presets (name, setpoint, duration_hours, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, setpoint, duration_hours, now, now),
+            "INSERT INTO presets (name, folder, setpoint, duration_hours, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, folder, setpoint, duration_hours, now, now),
         )
         conn.commit()
         return cur.lastrowid
@@ -114,13 +117,13 @@ def create_preset(name: str, setpoint: float, duration_hours: float) -> int:
         conn.close()
 
 
-def update_preset(preset_id: int, name: str, setpoint: float, duration_hours: float):
+def update_preset(preset_id: int, name: str, folder: str | None, setpoint: float, duration_hours: float):
     conn = _connect()
     try:
         conn.execute(
-            "UPDATE presets SET name = ?, setpoint = ?, duration_hours = ?, updated_at = ? "
+            "UPDATE presets SET name = ?, folder = ?, setpoint = ?, duration_hours = ?, updated_at = ? "
             "WHERE id = ?",
-            (name, setpoint, duration_hours, time.time(), preset_id),
+            (name, folder, setpoint, duration_hours, time.time(), preset_id),
         )
         conn.commit()
     finally:

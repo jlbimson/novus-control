@@ -24,6 +24,27 @@ _connected = False
 
 _stop_event = threading.Event()
 
+# Presets drive the device's native Ramp-to-Soak feature (rs_prog_type=1)
+# instead of a purely software-timed hold, so a run keeps going even if this
+# container is down. rs_tbas is always forced to minutes (1) since seconds
+# only covers ~2.7h. Confirmed live that RUN alone does not start execution
+# in this mode - rs_prn_exec must also be written to 1 to arm it.
+_NATIVE_TBAS_MINUTES = 1
+# We could not confirm in testing whether the device reliably turns RUN off
+# on its own once the soak completes (only observed the ramp segment, which
+# doesn't even count time - it just runs until PV reaches SP). This backstop
+# force-stops an overdue run so nothing can heat unattended indefinitely if
+# that native completion doesn't happen as expected.
+_AUTO_STOP_SAFETY_MARGIN_HOURS = 1.0
+
+
+def _disarm_native_program():
+    """Return the device to plain fixed-setpoint control. Called whenever a
+    preset run ends, so manual Run toggling from the Settings page afterward
+    behaves as simple PID control rather than inheriting a stale program."""
+    device.write(config.REGISTERS_BY_KEY["rs_prn_exec"], 0)
+    device.write(config.REGISTERS_BY_KEY["rs_prog_type"], 0)
+
 
 def _poll_once():
     global _latest_ts, _connected
@@ -59,21 +80,43 @@ def _poll_once():
 
 
 def _check_active_run_expiry():
-    """Auto-stop a preset run once its duration has elapsed. Runs every poll
-    cycle so it self-heals across container restarts (started_at is an
-    absolute timestamp persisted in the db, not an in-memory countdown)."""
+    """Watch a preset run to completion. Runs every poll cycle so it
+    self-heals across container restarts (started_at is an absolute
+    timestamp persisted in the db, not an in-memory countdown).
+
+    Primary path: the device's native Ramp-to-Soak stops itself (RUN drops
+    to 0 on the device) - we just notice that and clear our tracking.
+    Backstop: if RUN is still on well past the expected duration, force a
+    stop ourselves rather than trust the native completion indefinitely.
+    """
     active = db.get_active_run()
     if active is None:
         return
-    elapsed_hours = (time.time() - active["started_at"]) / 3600
-    if elapsed_hours < active["duration_hours"]:
+
+    run_value = _latest_values.get("control_run")
+    if run_value is not None and run_value < 0.5:
+        db.clear_active_run()
+        logger.info("preset '%s' finished (device reported run stopped)", active["preset_name"])
         return
 
+    elapsed_hours = (time.time() - active["started_at"]) / 3600
+    deadline_hours = active["duration_hours"] + _AUTO_STOP_SAFETY_MARGIN_HOURS
+    if elapsed_hours < deadline_hours:
+        return
+
+    logger.warning(
+        "preset '%s' ran %.2fh (expected %.2fh) without the device reporting stop - "
+        "forcing stop as a safety backstop",
+        active["preset_name"],
+        elapsed_hours,
+        active["duration_hours"],
+    )
     try:
         device.write(config.CONTROLS_BY_KEY["control_run"], False)
+        _disarm_native_program()
     except Exception:
         logger.exception(
-            "failed to auto-stop finished preset '%s' - will retry next cycle",
+            "failed to force-stop overdue preset '%s' - will retry next cycle",
             active["preset_name"],
         )
         return
@@ -81,9 +124,6 @@ def _check_active_run_expiry():
     db.clear_active_run()
     with _state_lock:
         _latest_values["control_run"] = 0.0
-    logger.info(
-        "preset '%s' finished after %.2fh, stopped run", active["preset_name"], elapsed_hours
-    )
 
 
 def _poll_loop():
@@ -180,6 +220,7 @@ def _validate_preset_body(body: dict):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(422, "name is required")
+    folder = (body.get("folder") or "").strip() or None
     try:
         setpoint = float(body["setpoint"])
         duration_hours = float(body["duration_hours"])
@@ -187,7 +228,7 @@ def _validate_preset_body(body: dict):
         raise HTTPException(422, "setpoint and duration_hours must be numbers")
     if duration_hours <= 0:
         raise HTTPException(422, "duration_hours must be positive")
-    return name, setpoint, duration_hours
+    return name, folder, setpoint, duration_hours
 
 
 @app.get("/api/presets")
@@ -197,9 +238,9 @@ def list_presets():
 
 @app.post("/api/presets")
 def create_preset(body: dict):
-    name, setpoint, duration_hours = _validate_preset_body(body)
+    name, folder, setpoint, duration_hours = _validate_preset_body(body)
     try:
-        preset_id = db.create_preset(name, setpoint, duration_hours)
+        preset_id = db.create_preset(name, folder, setpoint, duration_hours)
     except sqlite3.IntegrityError:
         raise HTTPException(409, f"a preset named '{name}' already exists") from None
     return db.get_preset(preset_id)
@@ -209,9 +250,9 @@ def create_preset(body: dict):
 def update_preset(preset_id: int, body: dict):
     if db.get_preset(preset_id) is None:
         raise HTTPException(404, "unknown preset")
-    name, setpoint, duration_hours = _validate_preset_body(body)
+    name, folder, setpoint, duration_hours = _validate_preset_body(body)
     try:
-        db.update_preset(preset_id, name, setpoint, duration_hours)
+        db.update_preset(preset_id, name, folder, setpoint, duration_hours)
     except sqlite3.IntegrityError:
         raise HTTPException(409, f"a preset named '{name}' already exists") from None
     return db.get_preset(preset_id)
@@ -259,9 +300,17 @@ def start_run(preset_id: int):
     setpoint_item = config.CONTROLS_BY_KEY["setpoint"]
     scale = setpoint_item.get("scale", 1)
     raw_setpoint = round(preset["setpoint"] / scale)
+    soak_minutes = max(1, round(preset["duration_hours"] * 60))
 
     try:
+        # Stop anything in progress first for a clean, predictable (re)start.
+        device.write(config.CONTROLS_BY_KEY["control_run"], False)
         device.write(setpoint_item, raw_setpoint)
+        device.write(config.REGISTERS_BY_KEY["rs_tbas"], _NATIVE_TBAS_MINUTES)
+        device.write(config.REGISTERS_BY_KEY["rs_timer_soak"], soak_minutes)
+        device.write(config.REGISTERS_BY_KEY["rs_prog_type"], 1)  # Ramp to Soak
+        device.write(config.CONTROLS_BY_KEY["control_mode"], True)  # Automatic, needed to drive output
+        device.write(config.REGISTERS_BY_KEY["rs_prn_exec"], 1)  # arm/start execution
         device.write(config.CONTROLS_BY_KEY["control_run"], True)
     except Exception as e:
         logger.exception("failed to start preset '%s'", preset["name"])
@@ -274,13 +323,16 @@ def start_run(preset_id: int):
 
     with _state_lock:
         _latest_values["setpoint"] = preset["setpoint"]
+        _latest_values["control_mode"] = 1.0
         _latest_values["control_run"] = 1.0
+        _latest_values["rs_prog_type"] = 1.0
+        _latest_values["rs_prn_exec"] = 1.0
 
     logger.info(
-        "started preset '%s': setpoint=%s duration=%sh",
+        "started preset '%s' on native Ramp to Soak: setpoint=%s soak=%s min",
         preset["name"],
         preset["setpoint"],
-        preset["duration_hours"],
+        soak_minutes,
     )
     return _active_run_response(db.get_active_run())
 
@@ -290,6 +342,7 @@ def stop_run():
     active = db.get_active_run()
     try:
         device.write(config.CONTROLS_BY_KEY["control_run"], False)
+        _disarm_native_program()
     except Exception as e:
         logger.exception("failed to stop run")
         raise HTTPException(502, f"write to device failed: {e}") from None
@@ -297,6 +350,8 @@ def stop_run():
     db.clear_active_run()
     with _state_lock:
         _latest_values["control_run"] = 0.0
+        _latest_values["rs_prog_type"] = 0.0
+        _latest_values["rs_prn_exec"] = 0.0
 
     if active:
         logger.info("stopped preset '%s'", active["preset_name"])

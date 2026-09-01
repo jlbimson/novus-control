@@ -5,6 +5,8 @@ const activeRunCard = document.getElementById("active-run-card");
 const formTitle = document.getElementById("preset-form-title");
 const form = document.getElementById("preset-form");
 const nameInput = document.getElementById("preset-name");
+const folderInput = document.getElementById("preset-folder");
+const folderOptionsEl = document.getElementById("preset-folder-options");
 const setpointInput = document.getElementById("preset-setpoint");
 const durationInput = document.getElementById("preset-duration");
 const submitBtn = document.getElementById("preset-form-submit");
@@ -23,6 +25,7 @@ function resetForm() {
 function startEdit(preset) {
   editingId = preset.id;
   nameInput.value = preset.name;
+  folderInput.value = preset.folder || "";
   setpointInput.value = preset.setpoint;
   durationInput.value = preset.duration_hours;
   formTitle.textContent = `Edit "${preset.name}"`;
@@ -37,6 +40,7 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const body = {
     name: nameInput.value.trim(),
+    folder: folderInput.value.trim(),
     setpoint: Number(setpointInput.value),
     duration_hours: Number(durationInput.value),
   };
@@ -117,16 +121,47 @@ function renderPresetCard(preset, isActive) {
 
 let activePresetId = null;
 
+function updateFolderOptions(presets) {
+  const folders = [...new Set(presets.map((p) => p.folder).filter(Boolean))].sort();
+  folderOptionsEl.innerHTML = folders.map((f) => `<option value="${f}"></option>`).join("");
+}
+
 async function loadPresets() {
   const res = await fetch("/api/presets");
   const presets = await res.json();
+  updateFolderOptions(presets);
+
   listEl.innerHTML = "";
   if (presets.length === 0) {
     listEl.innerHTML = `<div class="preset-empty">No presets yet - create one above.</div>`;
     return;
   }
+
+  const groups = new Map();
   for (const preset of presets) {
-    listEl.appendChild(renderPresetCard(preset, preset.id === activePresetId));
+    const key = preset.folder || "Uncategorized";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(preset);
+  }
+  const sortedFolders = [...groups.keys()].sort((a, b) => {
+    if (a === "Uncategorized") return 1;
+    if (b === "Uncategorized") return -1;
+    return a.localeCompare(b);
+  });
+
+  for (const folderName of sortedFolders) {
+    const section = document.createElement("div");
+    section.className = "preset-folder";
+    const title = document.createElement("div");
+    title.className = "preset-folder-title";
+    title.textContent = folderName;
+    const items = document.createElement("div");
+    items.className = "preset-folder-items";
+    for (const preset of groups.get(folderName)) {
+      items.appendChild(renderPresetCard(preset, preset.id === activePresetId));
+    }
+    section.append(title, items);
+    listEl.appendChild(section);
   }
 }
 
