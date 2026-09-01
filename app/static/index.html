@@ -7,37 +7,43 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <h1>Novus N20K48</h1>
-    <div id="conn-status" class="status status-unknown">
-      <span class="dot"></span>
-      <span class="label">connecting…</span>
-    </div>
-  </header>
-
-  <main>
-    <section id="readings">
-      <h2>Status</h2>
-      <div id="reading-cards" class="card-grid"></div>
-    </section>
-
-    <section id="chart-section" hidden>
-      <h2><span id="chart-title"></span></h2>
-      <div class="range-buttons">
-        <button data-minutes="60">1h</button>
-        <button data-minutes="360">6h</button>
-        <button data-minutes="1440">24h</button>
-        <button data-minutes="10080">7d</button>
+  <div class="app">
+    <nav class="sidebar">
+      <div class="brand">Novus N20K48</div>
+      <div id="conn-status" class="status status-unknown">
+        <span class="dot"></span>
+        <span class="label">connecting…</span>
       </div>
-      <canvas id="chart" width="800" height="240"></canvas>
-    </section>
+      <div class="nav-links">
+        <a href="/" class="nav-link active">Overview</a>
+        <a href="/static/presets.html" class="nav-link">Presets</a>
+        <a href="/static/settings.html" class="nav-link">Settings</a>
+      </div>
+    </nav>
 
-    <section id="controls">
-      <h2>Controls</h2>
-      <div id="control-list" class="control-list"></div>
-    </section>
-  </main>
+    <main>
+      <h1>Overview</h1>
 
-  <script src="/static/app.js"></script>
+      <div id="device-state" class="state-badges"></div>
+
+      <div id="overview-cards" class="card-grid overview-cards"></div>
+
+      <section id="overview-chart-section">
+        <div class="chart-header">
+          <div id="chart-legend" class="chart-legend"></div>
+          <div class="range-buttons">
+            <button data-minutes="60" class="active">1h</button>
+            <button data-minutes="360">6h</button>
+            <button data-minutes="1440">24h</button>
+            <button data-minutes="10080">7d</button>
+          </div>
+        </div>
+        <canvas id="overview-chart" width="900" height="320"></canvas>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/overview.js"></script>
 </body>
 </html>

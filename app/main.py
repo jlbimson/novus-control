@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -33,18 +34,56 @@ def _poll_once():
         if result is not None:
             values[item["key"]] = result
 
+    # Controls are RW holding/coil registers - otherwise write-only from the
+    # poll loop's perspective, so read them back too each cycle. This is
+    # what lets the settings page show each control's actual current value
+    # on the device, not just what's pending in the input.
     for item in config.CONTROLS:
-        if item["type"] == "coil" and item.get("control_type") == "toggle":
+        if item["type"] == "coil":
             result = device.read_coil(item)
             if result is not None:
                 values[item["key"]] = 1.0 if result else 0.0
+        else:
+            result = device.read(item)
+            if result is not None:
+                values[item["key"]] = result
 
     with _state_lock:
         _latest_values.update(values)
         _latest_ts = time.time()
         _connected = len(values) > 0
 
-    db.insert_readings({k: v for k, v in values.items() if k in config.READINGS_BY_KEY})
+    db.insert_readings({k: v for k, v in values.items() if k in config.REGISTERS_BY_KEY})
+
+    _check_active_run_expiry()
+
+
+def _check_active_run_expiry():
+    """Auto-stop a preset run once its duration has elapsed. Runs every poll
+    cycle so it self-heals across container restarts (started_at is an
+    absolute timestamp persisted in the db, not an in-memory countdown)."""
+    active = db.get_active_run()
+    if active is None:
+        return
+    elapsed_hours = (time.time() - active["started_at"]) / 3600
+    if elapsed_hours < active["duration_hours"]:
+        return
+
+    try:
+        device.write(config.CONTROLS_BY_KEY["control_run"], False)
+    except Exception:
+        logger.exception(
+            "failed to auto-stop finished preset '%s' - will retry next cycle",
+            active["preset_name"],
+        )
+        return
+
+    db.clear_active_run()
+    with _state_lock:
+        _latest_values["control_run"] = 0.0
+    logger.info(
+        "preset '%s' finished after %.2fh, stopped run", active["preset_name"], elapsed_hours
+    )
 
 
 def _poll_loop():
@@ -135,6 +174,133 @@ def set_control(key: str, body: dict):
         _latest_values[key] = float(value) if not isinstance(value, bool) else (1.0 if value else 0.0)
 
     return {"ok": True, "key": key, "value": value}
+
+
+def _validate_preset_body(body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(422, "name is required")
+    try:
+        setpoint = float(body["setpoint"])
+        duration_hours = float(body["duration_hours"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "setpoint and duration_hours must be numbers")
+    if duration_hours <= 0:
+        raise HTTPException(422, "duration_hours must be positive")
+    return name, setpoint, duration_hours
+
+
+@app.get("/api/presets")
+def list_presets():
+    return db.list_presets()
+
+
+@app.post("/api/presets")
+def create_preset(body: dict):
+    name, setpoint, duration_hours = _validate_preset_body(body)
+    try:
+        preset_id = db.create_preset(name, setpoint, duration_hours)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, f"a preset named '{name}' already exists") from None
+    return db.get_preset(preset_id)
+
+
+@app.put("/api/presets/{preset_id}")
+def update_preset(preset_id: int, body: dict):
+    if db.get_preset(preset_id) is None:
+        raise HTTPException(404, "unknown preset")
+    name, setpoint, duration_hours = _validate_preset_body(body)
+    try:
+        db.update_preset(preset_id, name, setpoint, duration_hours)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, f"a preset named '{name}' already exists") from None
+    return db.get_preset(preset_id)
+
+
+@app.delete("/api/presets/{preset_id}")
+def delete_preset(preset_id: int):
+    if db.get_preset(preset_id) is None:
+        raise HTTPException(404, "unknown preset")
+    active = db.get_active_run()
+    if active and active["preset_id"] == preset_id:
+        raise HTTPException(409, "cannot delete a preset while it is running")
+    db.delete_preset(preset_id)
+    return {"ok": True}
+
+
+def _active_run_response(active):
+    if active is None:
+        return {"active": False}
+    elapsed_hours = (time.time() - active["started_at"]) / 3600
+    remaining_hours = max(0.0, active["duration_hours"] - elapsed_hours)
+    return {
+        "active": True,
+        "preset_id": active["preset_id"],
+        "preset_name": active["preset_name"],
+        "setpoint": active["setpoint"],
+        "duration_hours": active["duration_hours"],
+        "started_at": active["started_at"],
+        "elapsed_hours": elapsed_hours,
+        "remaining_hours": remaining_hours,
+    }
+
+
+@app.get("/api/run/active")
+def get_active_run():
+    return _active_run_response(db.get_active_run())
+
+
+@app.post("/api/run/start/{preset_id}")
+def start_run(preset_id: int):
+    preset = db.get_preset(preset_id)
+    if preset is None:
+        raise HTTPException(404, "unknown preset")
+
+    setpoint_item = config.CONTROLS_BY_KEY["setpoint"]
+    scale = setpoint_item.get("scale", 1)
+    raw_setpoint = round(preset["setpoint"] / scale)
+
+    try:
+        device.write(setpoint_item, raw_setpoint)
+        device.write(config.CONTROLS_BY_KEY["control_run"], True)
+    except Exception as e:
+        logger.exception("failed to start preset '%s'", preset["name"])
+        raise HTTPException(502, f"write to device failed: {e}") from None
+
+    started_at = time.time()
+    db.set_active_run(
+        preset["id"], preset["name"], preset["setpoint"], preset["duration_hours"], started_at
+    )
+
+    with _state_lock:
+        _latest_values["setpoint"] = preset["setpoint"]
+        _latest_values["control_run"] = 1.0
+
+    logger.info(
+        "started preset '%s': setpoint=%s duration=%sh",
+        preset["name"],
+        preset["setpoint"],
+        preset["duration_hours"],
+    )
+    return _active_run_response(db.get_active_run())
+
+
+@app.post("/api/run/stop")
+def stop_run():
+    active = db.get_active_run()
+    try:
+        device.write(config.CONTROLS_BY_KEY["control_run"], False)
+    except Exception as e:
+        logger.exception("failed to stop run")
+        raise HTTPException(502, f"write to device failed: {e}") from None
+
+    db.clear_active_run()
+    with _state_lock:
+        _latest_values["control_run"] = 0.0
+
+    if active:
+        logger.info("stopped preset '%s'", active["preset_name"])
+    return {"ok": True}
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

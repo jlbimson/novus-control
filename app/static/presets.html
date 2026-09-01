@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Novus N20K48 - Presets</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar">
+      <div class="brand">Novus N20K48</div>
+      <div id="conn-status" class="status status-unknown">
+        <span class="dot"></span>
+        <span class="label">connecting…</span>
+      </div>
+      <div class="nav-links">
+        <a href="/" class="nav-link">Overview</a>
+        <a href="/static/presets.html" class="nav-link active">Presets</a>
+        <a href="/static/settings.html" class="nav-link">Settings</a>
+      </div>
+    </nav>
+
+    <main>
+      <h1>Presets</h1>
+
+      <section id="active-run-section" hidden>
+        <div id="active-run-card" class="active-run-card"></div>
+      </section>
+
+      <section id="preset-form-section">
+        <h2 id="preset-form-title">New Preset</h2>
+        <form id="preset-form" class="preset-form">
+          <label>
+            <span>Name</span>
+            <input type="text" id="preset-name" placeholder="Dry TPU" required />
+          </label>
+          <label>
+            <span>Setpoint (°C)</span>
+            <input type="number" id="preset-setpoint" step="0.1" placeholder="65" required />
+          </label>
+          <label>
+            <span>Duration (hours)</span>
+            <input type="number" id="preset-duration" step="0.1" min="0.1" placeholder="8" required />
+          </label>
+          <div class="preset-form-actions">
+            <button type="submit" id="preset-form-submit">Save Preset</button>
+            <button type="button" id="preset-form-cancel" hidden>Cancel</button>
+          </div>
+          <span class="status-msg" id="preset-form-status"></span>
+        </form>
+      </section>
+
+      <section id="preset-list-section">
+        <h2>Saved Presets</h2>
+        <div id="preset-list" class="preset-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/presets.js"></script>
+</body>
+</html>

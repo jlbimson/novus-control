@@ -1,29 +1,13 @@
-const STATUS_POLL_MS = 3000;
-
 let cfg = { readings: [], controls: [] };
 let selectedKey = null;
 let selectedMinutes = 60;
 
-const connStatusEl = document.getElementById("conn-status");
 const cardsEl = document.getElementById("reading-cards");
 const controlsEl = document.getElementById("control-list");
 const chartSection = document.getElementById("chart-section");
 const chartTitleEl = document.getElementById("chart-title");
 const canvas = document.getElementById("chart");
 const ctx = canvas.getContext("2d");
-
-function fmt(value, unit) {
-  if (value === undefined || value === null || Number.isNaN(value)) return "--";
-  const rounded = Math.abs(value) < 10 ? value.toFixed(2) : Math.round(value * 10) / 10;
-  return `${rounded}${unit ? ` <span class="unit">${unit}</span>` : ""}`;
-}
-
-async function loadConfig() {
-  const res = await fetch("/api/config");
-  cfg = await res.json();
-  renderCards();
-  renderControls();
-}
 
 function renderCards() {
   cardsEl.innerHTML = "";
@@ -87,7 +71,10 @@ function renderControls() {
     }
 
     row.innerHTML = `
-      <div class="label">${item.label}</div>
+      <div class="control-info">
+        <div class="label">${item.label}</div>
+        <div class="current-value" data-current>current: --</div>
+      </div>
       <div class="input-group">
         ${inputHtml}
         <span class="status-msg" data-status></span>
@@ -131,39 +118,43 @@ async function applyControl(item, value, statusMsg) {
   }
 }
 
-async function pollStatus() {
-  try {
-    const res = await fetch("/api/status");
-    const data = await res.json();
-    updateConnStatus(data.connected);
-    for (const item of cfg.readings) {
-      const card = cardsEl.querySelector(`.card[data-key="${item.key}"] [data-value]`);
-      if (card) card.innerHTML = fmt(data.values[item.key], item.unit);
-    }
-    for (const item of cfg.controls) {
-      const row = controlsEl.querySelector(`.control[data-key="${item.key}"]`);
-      if (!row) continue;
-      const input = row.querySelector("[data-input]");
-      const value = data.values[item.key];
-      if (value === undefined || document.activeElement === input) continue;
-      if (item.control_type === "toggle") {
-        input.checked = value >= 0.5;
-      } else if (item.control_type === "number") {
-        input.value = value;
-      } else if (item.control_type === "select") {
-        input.value = value;
-      }
-    }
-  } catch (err) {
-    updateConnStatus(false);
-    console.error("status poll failed", err);
+function formatCurrent(item, value) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "current: --";
+  if (item.control_type === "toggle") return `current: ${value >= 0.5 ? "On" : "Off"}`;
+  if (item.control_type === "select") {
+    const opt = (item.options || []).find((o) => o.value === value);
+    return `current: ${opt ? opt.label : value}`;
   }
+  const rounded = Math.abs(value) < 10 ? value.toFixed(2) : Math.round(value * 10) / 10;
+  return `current: ${rounded}${item.unit ? ` ${item.unit}` : ""}`;
 }
 
-function updateConnStatus(connected) {
-  connStatusEl.classList.remove("status-ok", "status-bad", "status-unknown");
-  connStatusEl.classList.add(connected ? "status-ok" : "status-bad");
-  connStatusEl.querySelector(".label").textContent = connected ? "connected" : "disconnected";
+async function pollStatus() {
+  const data = await fetchStatus();
+  if (!data) return;
+  for (const item of cfg.readings) {
+    const card = cardsEl.querySelector(`.card[data-key="${item.key}"] [data-value]`);
+    if (card) card.innerHTML = fmt(data.values[item.key], item.unit);
+  }
+  for (const item of cfg.controls) {
+    const row = controlsEl.querySelector(`.control[data-key="${item.key}"]`);
+    if (!row) continue;
+    const value = data.values[item.key];
+
+    const currentEl = row.querySelector("[data-current]");
+    if (currentEl) currentEl.textContent = formatCurrent(item, value);
+
+    const input = row.querySelector("[data-input]");
+    if (value === undefined || document.activeElement === input) continue;
+    if (item.control_type === "toggle") {
+      input.checked = value >= 0.5;
+    } else if (item.control_type === "number") {
+      input.value = value;
+    } else if (item.control_type === "select") {
+      const hasOption = (item.options || []).some((o) => o.value === value);
+      if (hasOption) input.value = value;
+    }
+  }
 }
 
 async function loadHistory() {
@@ -242,7 +233,10 @@ document.querySelectorAll(".range-buttons button").forEach((btn) => {
 });
 document.querySelector('.range-buttons button[data-minutes="60"]').classList.add("active");
 
-loadConfig().then(() => {
+loadConfig().then((data) => {
+  cfg = data;
+  renderCards();
+  renderControls();
   pollStatus();
   setInterval(pollStatus, STATUS_POLL_MS);
 });

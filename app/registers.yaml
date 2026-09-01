@@ -98,17 +98,47 @@ readings:
     # Bits 8-12: open input, above/below operating limit, cold junction
     # error, Pt100 error. See protocol doc §2.
 
+  - key: rs_prog_type
+    label: "Program Mode"
+    address: 254 # RS_PROG_TYPE
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+    # 0 = Fixed setpoint (no program), 1 = Ramp to Soak, 2 = Ramps and Soaks
+    # program (uses rs_prn_exec/rs_seg below to identify which of the 20
+    # program slots is executing). See protocol doc §2 around RS_PROG_TYPE.
+
+  - key: rs_prn_exec
+    label: "Program Executing"
+    address: 247 # RS_PRN_EXEC
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+    # Range 0-20. Only meaningful when rs_prog_type = 2 (Ramps and Soaks
+    # program); 0 means no program is currently selected/executing.
+
+  - key: rs_seg
+    label: "Program Segment"
+    address: 249 # RS_SEG
+    type: holding
+    data_type: uint16
+    scale: 1
+    unit: ""
+
   - key: process_variable
     label: "Process Variable (PV)"
     address: 201
     type: holding
     data_type: int16
-    # Per the doc: "For temperature readings, the value will always be
-    # multiplied by 10, regardless of the dPPo value." For linear inputs
-    # the true decimal position comes from INPUT_DPPO (address 279:
-    # 0=XXXX, 1=XXX.X, 2=XX.XX, 3=X.XXX) instead of this fixed scale.
-    scale: 0.1
-    unit: ""
+    # The doc claims temperature PV is "always multiplied by 10, regardless
+    # of dPPo" - that does NOT hold on this Pt100 input: confirmed by
+    # reading INPUT_DPPO (address 279) live, which is 0 ("XXXX", no decimal
+    # places), and the raw PV register already equals the true value with
+    # no further scaling. Revisit if AI_TYPE/INPUT_DPPO are ever reconfigured.
+    scale: 1
+    unit: "°C"
 
 controls:
   # --- Primary run/mode controls ---
@@ -149,9 +179,12 @@ controls:
     type: holding
     control_type: number
     data_type: int16
-    scale: 0.1 # ASSUMPTION: matches the PV's x10 temperature scaling; the
-    unit: "" # doc only specifies SP's *range* (CTRL_SPLL..CTRL_SPHL), not
-    # its decimal scale. Device clamps out-of-range writes automatically.
+    # Confirmed live: INPUT_DPPO (address 279) is 0 ("XXXX", no decimal
+    # places), and the raw SP register already equals the true value with
+    # no further scaling - matches process_variable's dppo. Device clamps
+    # out-of-range writes automatically.
+    scale: 1
+    unit: "°C"
 
   - key: output_power
     label: "Output Power (MV)"
@@ -179,8 +212,8 @@ controls:
     type: holding
     control_type: number
     data_type: int16
-    scale: 0.1 # ASSUMPTION, see `setpoint` above
-    unit: ""
+    scale: 1 # matches setpoint's confirmed dppo=0 scaling, see `setpoint` above
+    unit: "°C"
 
   # --- PID tuning ---
   - key: auto_tune
