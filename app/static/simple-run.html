@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Novus N20K48 - Settings</title>
+  <title>Novus N20K48 - Simple Run</title>
   <link rel="stylesheet" href="/static/style.css?v=2" />
 </head>
 <body>
@@ -22,7 +22,7 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
           <span>Overview</span>
         </a>
-        <a href="/static/simple-run.html" class="nav-link">
+        <a href="/static/simple-run.html" class="nav-link active">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           <span>Simple Run</span>
         </a>
@@ -30,7 +30,7 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
           <span>Presets</span>
         </a>
-        <a href="/static/settings.html" class="nav-link active">
+        <a href="/static/settings.html" class="nav-link">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>Settings</span>
         </a>
@@ -38,32 +38,40 @@
     </nav>
 
     <main>
-      <h1>Settings</h1>
+      <h1>Simple Run</h1>
+      <p class="hint">
+        Start the oven at a temperature for a set duration without saving a
+        preset first. Uses the same native Ramp to Soak mode as a Simple
+        preset, so the run keeps going even if this dashboard goes offline.
+      </p>
 
-      <section id="readings">
-        <h2>Status</h2>
-        <div id="reading-cards" class="card-grid"></div>
+      <section id="active-run-section" hidden>
+        <div id="active-run-card" class="active-run-card"></div>
       </section>
 
-      <section id="chart-section" hidden>
-        <h2><span id="chart-title"></span></h2>
-        <div class="range-buttons">
-          <button data-minutes="60">1h</button>
-          <button data-minutes="360">6h</button>
-          <button data-minutes="1440">24h</button>
-          <button data-minutes="10080">7d</button>
-        </div>
-        <canvas id="chart" width="800" height="240"></canvas>
-      </section>
-
-      <section id="controls">
-        <h2>Controls</h2>
-        <div id="control-list" class="control-list"></div>
+      <section id="simple-run-form-section">
+        <h2>Start a Run</h2>
+        <form id="simple-run-form" class="preset-form">
+          <div class="preset-form-row">
+            <label>
+              <span>Setpoint (°C)</span>
+              <input type="number" id="run-setpoint" step="0.1" placeholder="65" required />
+            </label>
+            <label>
+              <span>Duration (hours)</span>
+              <input type="number" id="run-duration" step="0.1" min="0.1" placeholder="8" required />
+            </label>
+          </div>
+          <div class="preset-form-actions">
+            <button type="submit" id="run-form-submit">Start Run</button>
+          </div>
+          <span class="status-msg" id="run-form-status"></span>
+        </form>
       </section>
     </main>
   </div>
 
   <script src="/static/common.js?v=2"></script>
-  <script src="/static/settings.js?v=2"></script>
+  <script src="/static/simple-run.js?v=2"></script>
 </body>
 </html>

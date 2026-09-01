@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Novus N20K48 Control</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=2" />
 </head>
 <body>
   <div class="app">
@@ -21,6 +21,10 @@
         <a href="/" class="nav-link active">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
           <span>Overview</span>
+        </a>
+        <a href="/static/simple-run.html" class="nav-link">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span>Simple Run</span>
         </a>
         <a href="/static/presets.html" class="nav-link">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
@@ -50,12 +54,15 @@
             <button data-minutes="10080">7d</button>
           </div>
         </div>
-        <canvas id="overview-chart" width="900" height="320"></canvas>
+        <div class="chart-canvas-wrap">
+          <canvas id="overview-chart" width="900" height="320"></canvas>
+          <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+        </div>
       </section>
     </main>
   </div>
 
-  <script src="/static/common.js"></script>
-  <script src="/static/overview.js"></script>
+  <script src="/static/common.js?v=2"></script>
+  <script src="/static/overview.js?v=2"></script>
 </body>
 </html>

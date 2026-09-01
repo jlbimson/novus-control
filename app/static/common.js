@@ -51,3 +51,41 @@ function formatDuration(hours) {
   if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;
 }
+
+function renderActiveRunCard(run, sectionEl, cardEl, onChange) {
+  if (!run || !run.active) {
+    sectionEl.hidden = true;
+    return;
+  }
+  sectionEl.hidden = false;
+  const pct = Math.min(100, (run.elapsed_hours / run.duration_hours) * 100);
+
+  cardEl.innerHTML = `
+    <div class="active-run-header">
+      <div>
+        <div class="active-run-label">Currently Running</div>
+        <div class="active-run-name">${run.preset_name}</div>
+      </div>
+      <button class="stop-btn" data-stop>Stop</button>
+    </div>
+    <div class="active-run-meta">
+      ${run.setpoint}°C — ${formatDuration(run.elapsed_hours)} elapsed / ${formatDuration(run.duration_hours)} total
+      (${formatDuration(run.remaining_hours)} remaining)
+    </div>
+    <div class="progress-bar">
+      <div class="progress-bar-fill" style="width:${pct}%"></div>
+    </div>
+  `;
+
+  cardEl.querySelector("[data-stop]").addEventListener("click", async () => {
+    const ok = confirm(`Stop "${run.preset_name}" now and turn the oven off?`);
+    if (!ok) return;
+    try {
+      const res = await fetch("/api/run/stop", { method: "POST" });
+      if (!res.ok) throw new Error(res.statusText);
+      if (onChange) onChange();
+    } catch (err) {
+      alert(`Failed to stop run: ${err.message}`);
+    }
+  });
+}

@@ -7,12 +7,39 @@ const OVERVIEW_SERIES = [
 let cfg = { readings: [], controls: [] };
 let itemsByKey = {};
 let selectedMinutes = 60;
+let visibleSeries = Object.fromEntries(OVERVIEW_SERIES.map((s) => [s.key, true]));
+let lastSeries = [];
+let lastLayout = null;
+let logicalWidth = 900;
+let logicalHeight = 320;
 
 const cardsEl = document.getElementById("overview-cards");
 const legendEl = document.getElementById("chart-legend");
 const canvas = document.getElementById("overview-chart");
 const ctx = canvas.getContext("2d");
+const canvasWrap = canvas.parentElement;
+const tooltipEl = document.getElementById("chart-tooltip");
 const stateEl = document.getElementById("device-state");
+
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvasWrap.clientWidth;
+  const cssHeight = canvas.clientHeight || 320;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  logicalWidth = cssWidth;
+  logicalHeight = cssHeight;
+}
+
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeCanvas();
+    drawOverviewChart(lastSeries);
+  }, 150);
+});
 
 function formatProgramState(values) {
   const progType = values.rs_prog_type;
@@ -74,11 +101,23 @@ function renderCards() {
 }
 
 function renderLegend() {
-  legendEl.innerHTML = OVERVIEW_SERIES.map(({ key, color }) => {
+  legendEl.innerHTML = "";
+  for (const { key, color } of OVERVIEW_SERIES) {
     const item = itemsByKey[key];
-    if (!item) return "";
-    return `<span class="legend-item"><span class="swatch" style="background:${color}"></span>${item.label}</span>`;
-  }).join("");
+    if (!item) continue;
+    const el = document.createElement("span");
+    el.className = "legend-item" + (visibleSeries[key] ? "" : " off");
+    el.dataset.key = key;
+    el.title = "Click to toggle on the graph";
+    el.innerHTML = `<span class="swatch" style="background:${color}"></span>${item.label}`;
+    el.addEventListener("click", () => {
+      visibleSeries[key] = !visibleSeries[key];
+      el.classList.toggle("off", !visibleSeries[key]);
+      hideTooltip();
+      drawOverviewChart(lastSeries);
+    });
+    legendEl.appendChild(el);
+  }
 }
 
 async function pollStatus() {
@@ -100,9 +139,10 @@ async function loadChart() {
       const res = await fetch(`/api/history?key=${encodeURIComponent(key)}&minutes=${selectedMinutes}`);
       const points = await res.json();
       const item = itemsByKey[key];
-      return { key, label: item ? item.label : key, color, axis, points };
+      return { key, label: item ? item.label : key, color, axis, unit: item ? item.unit : "", points };
     })
   );
+  lastSeries = series;
   drawOverviewChart(series);
 }
 
@@ -119,41 +159,84 @@ function yScaleFor(seriesList, marginTop, plotH) {
   return { lo, hi, y: (v) => marginTop + plotH - ((v - lo) / (hi - lo || 1)) * plotH };
 }
 
-function drawOverviewChart(series) {
-  const w = canvas.width;
-  const h = canvas.height;
+function formatAxisTime(ts) {
+  const d = new Date(ts * 1000);
+  if (selectedMinutes > 60 * 36) {
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatTooltipTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function nearestPoint(points, t) {
+  if (!points.length) return null;
+  let best = points[0];
+  let bestDiff = Math.abs(points[0].ts - t);
+  for (const p of points) {
+    const diff = Math.abs(p.ts - t);
+    if (diff < bestDiff) {
+      best = p;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+function drawOverviewChart(series, hoverX) {
+  const w = logicalWidth;
+  const h = logicalHeight;
   ctx.clearRect(0, 0, w, h);
 
-  const allPoints = series.flatMap((s) => s.points);
+  const compact = w < 480;
+  const visible = series.filter((s) => visibleSeries[s.key]);
+  const allPoints = visible.flatMap((s) => s.points);
   if (allPoints.length < 2) {
     ctx.fillStyle = "#8b93a1";
     ctx.font = "14px sans-serif";
-    ctx.fillText("Not enough data yet", 16, h / 2);
+    ctx.fillText(
+      series.length && visible.length === 0 ? "All series hidden" : "Not enough data yet",
+      16,
+      h / 2
+    );
+    lastLayout = null;
     return;
   }
 
-  const marginLeft = 55;
-  const marginRight = 55;
-  const marginBottom = 24;
+  const rightSeriesExists = visible.some((s) => s.axis === "right" && s.points.length);
+  const marginLeft = compact ? 34 : 55;
+  const marginRight = compact ? (rightSeriesExists ? 30 : 10) : 55;
+  const marginBottom = 26;
   const marginTop = 10;
   const plotW = w - marginLeft - marginRight;
   const plotH = h - marginTop - marginBottom;
+  const fontSize = compact ? 10 : 11;
 
   const times = allPoints.map((p) => p.ts);
   const minT = Math.min(...times);
   const maxT = Math.max(...times);
   const x = (t) => marginLeft + ((t - minT) / (maxT - minT || 1)) * plotW;
+  const invX = (px) => minT + ((px - marginLeft) / plotW) * (maxT - minT || 1);
 
-  const leftSeries = series.filter((s) => s.axis === "left" && s.points.length);
-  const rightSeries = series.filter((s) => s.axis === "right" && s.points.length);
-  const leftScale = yScaleFor(leftSeries.length ? leftSeries : series, marginTop, plotH);
-  const rightScale = yScaleFor(rightSeries.length ? rightSeries : series, marginTop, plotH);
+  const leftSeries = visible.filter((s) => s.axis === "left" && s.points.length);
+  const rightSeries = visible.filter((s) => s.axis === "right" && s.points.length);
+  const leftScale = yScaleFor(leftSeries.length ? leftSeries : visible, marginTop, plotH);
+  const rightScale = yScaleFor(rightSeries.length ? rightSeries : visible, marginTop, plotH);
 
-  ctx.strokeStyle = "#2a323f";
-  ctx.fillStyle = "#8b93a1";
-  ctx.font = "11px sans-serif";
+  ctx.strokeStyle = "#232b38";
+  ctx.fillStyle = "#838da0";
+  ctx.font = `${fontSize}px sans-serif`;
   ctx.lineWidth = 1;
-  const steps = 4;
+  const steps = compact ? 3 : 4;
   for (let i = 0; i <= steps; i++) {
     const v = leftScale.lo + ((leftScale.hi - leftScale.lo) * i) / steps;
     const yy = leftScale.y(v);
@@ -167,11 +250,29 @@ function drawOverviewChart(series) {
     for (let i = 0; i <= steps; i++) {
       const v = rightScale.lo + ((rightScale.hi - rightScale.lo) * i) / steps;
       const yy = rightScale.y(v);
-      ctx.fillText(v.toFixed(0), w - marginRight + 8, yy + 4);
+      ctx.fillText(v.toFixed(0), w - marginRight + 6, yy + 4);
     }
   }
 
-  for (const s of series) {
+  const xSteps = compact ? 2 : 5;
+  ctx.textAlign = "center";
+  for (let i = 0; i <= xSteps; i++) {
+    const t = minT + ((maxT - minT) * i) / xSteps;
+    let px = x(t);
+    if (i === 0) {
+      ctx.textAlign = "left";
+      px = marginLeft;
+    } else if (i === xSteps) {
+      ctx.textAlign = "right";
+      px = w - marginRight;
+    } else {
+      ctx.textAlign = "center";
+    }
+    ctx.fillText(formatAxisTime(t), px, h - 8);
+  }
+  ctx.textAlign = "left";
+
+  for (const s of visible) {
     if (s.points.length < 2) continue;
     const scale = s.axis === "right" ? rightScale : leftScale;
     ctx.strokeStyle = s.color;
@@ -185,13 +286,82 @@ function drawOverviewChart(series) {
     });
     ctx.stroke();
   }
+
+  lastLayout = { marginLeft, marginRight, marginTop, plotW, plotH, minT, maxT, x, invX, leftScale, rightScale, visible };
+
+  if (hoverX !== undefined && hoverX >= marginLeft && hoverX <= w - marginRight) {
+    ctx.strokeStyle = "#4a5568";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(hoverX, marginTop);
+    ctx.lineTo(hoverX, marginTop + plotH);
+    ctx.stroke();
+
+    const hoverT = invX(hoverX);
+    for (const s of visible) {
+      const p = nearestPoint(s.points, hoverT);
+      if (!p) continue;
+      const scale = s.axis === "right" ? rightScale : leftScale;
+      ctx.beginPath();
+      ctx.arc(x(p.ts), scale.y(p.value), 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = s.color;
+      ctx.fill();
+    }
+  }
 }
+
+function hideTooltip() {
+  tooltipEl.hidden = true;
+}
+
+function updateTooltip(dataX, cssX, cssY) {
+  if (!lastLayout) return;
+  const { marginLeft, marginRight, invX, visible } = lastLayout;
+  if (dataX < marginLeft || dataX > logicalWidth - marginRight) {
+    hideTooltip();
+    drawOverviewChart(lastSeries);
+    return;
+  }
+
+  const hoverT = invX(dataX);
+  const rows = visible
+    .map((s) => {
+      const p = nearestPoint(s.points, hoverT);
+      const val = p ? fmt(p.value, s.unit) : "--";
+      return `<div class="chart-tooltip-row"><span class="swatch" style="background:${s.color}"></span><span>${s.label}</span><strong>${val}</strong></div>`;
+    })
+    .join("");
+  tooltipEl.innerHTML = `<div class="chart-tooltip-time">${formatTooltipTime(hoverT)}</div>${rows}`;
+  tooltipEl.hidden = false;
+
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  const tw = tooltipEl.offsetWidth;
+  let left = cssX + 14;
+  if (left + tw > wrapRect.width - 4) left = cssX - tw - 14;
+  tooltipEl.style.left = `${Math.max(4, left)}px`;
+  tooltipEl.style.top = `${Math.max(4, cssY - 10)}px`;
+
+  drawOverviewChart(lastSeries, dataX);
+}
+
+canvas.addEventListener("pointermove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const dataX = e.clientX - rect.left;
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  updateTooltip(dataX, e.clientX - wrapRect.left, e.clientY - wrapRect.top);
+});
+
+canvas.addEventListener("pointerleave", () => {
+  hideTooltip();
+  drawOverviewChart(lastSeries);
+});
 
 document.querySelectorAll(".range-buttons button").forEach((btn) => {
   btn.addEventListener("click", () => {
     selectedMinutes = Number(btn.dataset.minutes);
     document.querySelectorAll(".range-buttons button").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
+    hideTooltip();
     loadChart();
   });
 });
@@ -202,6 +372,7 @@ document.querySelectorAll(".range-buttons button").forEach((btn) => {
   for (const item of [...cfg.readings, ...cfg.controls]) itemsByKey[item.key] = item;
   renderCards();
   renderLegend();
+  resizeCanvas();
   await pollStatus();
   await loadChart();
   setInterval(pollStatus, STATUS_POLL_MS);

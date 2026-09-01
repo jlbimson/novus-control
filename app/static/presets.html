@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Novus N20K48 - Presets</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=2" />
 </head>
 <body>
   <div class="app">
@@ -22,6 +22,10 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
           <span>Overview</span>
         </a>
+        <a href="/static/simple-run.html" class="nav-link">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span>Simple Run</span>
+        </a>
         <a href="/static/presets.html" class="nav-link active">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
           <span>Presets</span>
@@ -36,11 +40,10 @@
     <main>
       <h1>Presets</h1>
       <p class="hint">
-        Starting a preset programs the controller's own Ramp to Soak mode and
-        starts it directly on the device, so the run keeps going even if this
-        dashboard or its container is offline. Duration is the soak (hold)
-        time at setpoint - actual total run time is a bit longer since it
-        doesn't include the initial ramp-up.
+        Starting a preset programs the controller's own Ramp to Soak (or, for
+        multi-segment ramp programs, Ramps and Soaks Program) mode and starts
+        it directly on the device, so the run keeps going even if this
+        dashboard or its container is offline.
       </p>
 
       <section id="active-run-section" hidden>
@@ -50,23 +53,47 @@
       <section id="preset-form-section">
         <h2 id="preset-form-title">New Preset</h2>
         <form id="preset-form" class="preset-form">
-          <label>
-            <span>Name</span>
-            <input type="text" id="preset-name" placeholder="Dry TPU" required />
-          </label>
-          <label>
-            <span>Folder (optional)</span>
-            <input type="text" id="preset-folder" list="preset-folder-options" placeholder="e.g. Materials" />
-            <datalist id="preset-folder-options"></datalist>
-          </label>
-          <label>
-            <span>Setpoint (°C)</span>
-            <input type="number" id="preset-setpoint" step="0.1" placeholder="65" required />
-          </label>
-          <label>
-            <span>Duration (hours)</span>
-            <input type="number" id="preset-duration" step="0.1" min="0.1" placeholder="8" required />
-          </label>
+          <div class="preset-form-row">
+            <label>
+              <span>Name</span>
+              <input type="text" id="preset-name" placeholder="Dry TPU" required />
+            </label>
+            <label>
+              <span>Folder (optional)</span>
+              <input type="text" id="preset-folder" list="preset-folder-options" placeholder="e.g. Materials" />
+              <datalist id="preset-folder-options"></datalist>
+            </label>
+          </div>
+
+          <div class="preset-mode-toggle">
+            <button type="button" class="mode-btn active" data-mode="simple">Simple</button>
+            <button type="button" class="mode-btn" data-mode="program">Ramp Program</button>
+          </div>
+
+          <div id="simple-fields" class="preset-mode-fields">
+            <div class="preset-form-row">
+              <label>
+                <span>Setpoint (°C)</span>
+                <input type="number" id="preset-setpoint" step="0.1" placeholder="65" />
+              </label>
+              <label>
+                <span>Duration (hours)</span>
+                <input type="number" id="preset-duration" step="0.1" min="0.1" placeholder="8" />
+              </label>
+            </div>
+          </div>
+
+          <div id="program-fields" class="preset-mode-fields" hidden>
+            <p class="hint" style="margin: 0;">
+              Each segment ramps from the previous setpoint to its own over
+              the given time. Repeat the same setpoint on the next segment to
+              hold (soak) at that temperature.
+            </p>
+            <div class="segment-list" id="segment-list"></div>
+            <button type="button" id="add-segment-btn" class="add-segment-btn">+ Add Segment</button>
+            <div class="segment-summary" id="segment-summary"></div>
+          </div>
+
           <div class="preset-form-actions">
             <button type="submit" id="preset-form-submit">Save Preset</button>
             <button type="button" id="preset-form-cancel" hidden>Cancel</button>
@@ -82,7 +109,7 @@
     </main>
   </div>
 
-  <script src="/static/common.js"></script>
-  <script src="/static/presets.js"></script>
+  <script src="/static/common.js?v=2"></script>
+  <script src="/static/presets.js?v=2"></script>
 </body>
 </html>

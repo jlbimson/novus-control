@@ -24,26 +24,110 @@ _connected = False
 
 _stop_event = threading.Event()
 
-# Presets drive the device's native Ramp-to-Soak feature (rs_prog_type=1)
-# instead of a purely software-timed hold, so a run keeps going even if this
-# container is down. rs_tbas is always forced to minutes (1) since seconds
-# only covers ~2.7h. Confirmed live that RUN alone does not start execution
-# in this mode - rs_prn_exec must also be written to 1 to arm it.
+# Single-setpoint runs (Simple Run, and "Simple" presets) drive the device's
+# native Ramp-to-Soak feature (rs_prog_type=1). rs_tbas is always forced to
+# minutes (1) since seconds only covers ~2.7h. Confirmed live that RUN alone
+# does not start execution in this mode - rs_prn_exec must also be written
+# to 1 to arm it.
 _NATIVE_TBAS_MINUTES = 1
-# We could not confirm in testing whether the device reliably turns RUN off
-# on its own once the soak completes (only observed the ramp segment, which
-# doesn't even count time - it just runs until PV reaches SP). This backstop
-# force-stops an overdue run so nothing can heat unattended indefinitely if
-# that native completion doesn't happen as expected.
+
+# Multi-segment "ramp program" presets drive the device's native Ramps and
+# Soaks PROGRAM feature (rs_prog_type=2) instead, using one dedicated program
+# slot on the device. Each program occupies a fixed 40-register block
+# starting at 400 + (slot-1)*40: PTOL, LP (link), PSP0 (start point), then up
+# to 9 segments of (time_minutes, event, setpoint). Confirmed live
+# (2026-09-01) that segment time is a real fixed wall-clock ramp duration (a
+# 1+1 minute 2-segment test completed and self-stopped at exactly 120s), not
+# a rate like rs_max_rate in the single Ramp-to-Soak mode.
+_PROGRAM_SLOT = 1
+_PROGRAM_BASE = 400 + (_PROGRAM_SLOT - 1) * 40
+_MAX_PROGRAM_SEGMENTS = 9
+
+# Confirmed live for both native modes that the device reliably turns RUN off
+# on its own once the program/soak completes. This backstop is kept anyway as
+# cheap defense-in-depth - force-stops an overdue run so nothing can heat
+# unattended indefinitely if that native completion ever doesn't fire.
 _AUTO_STOP_SAFETY_MARGIN_HOURS = 1.0
 
 
 def _disarm_native_program():
     """Return the device to plain fixed-setpoint control. Called whenever a
-    preset run ends, so manual Run toggling from the Settings page afterward
+    run ends, so manual Run toggling from the Settings page afterward
     behaves as simple PID control rather than inheriting a stale program."""
     device.write(config.REGISTERS_BY_KEY["rs_prn_exec"], 0)
     device.write(config.REGISTERS_BY_KEY["rs_prog_type"], 0)
+
+
+def _program_register(offset):
+    return {"key": "program_reg", "address": _PROGRAM_BASE + offset, "type": "holding", "data_type": "int16"}
+
+
+def _start_simple_run(setpoint: float, duration_hours: float):
+    """Native single-segment Ramp to Soak (rs_prog_type=1)."""
+    setpoint_item = config.CONTROLS_BY_KEY["setpoint"]
+    scale = setpoint_item.get("scale", 1)
+    raw_setpoint = round(setpoint / scale)
+    soak_minutes = max(1, round(duration_hours * 60))
+
+    device.write(config.CONTROLS_BY_KEY["control_run"], False)
+    device.write(setpoint_item, raw_setpoint)
+    device.write(config.REGISTERS_BY_KEY["rs_tbas"], _NATIVE_TBAS_MINUTES)
+    device.write(config.REGISTERS_BY_KEY["rs_timer_soak"], soak_minutes)
+    device.write(config.REGISTERS_BY_KEY["rs_prog_type"], 1)
+    device.write(config.CONTROLS_BY_KEY["control_mode"], True)
+    device.write(config.REGISTERS_BY_KEY["rs_prn_exec"], 1)
+    device.write(config.CONTROLS_BY_KEY["control_run"], True)
+
+    with _state_lock:
+        _latest_values["setpoint"] = setpoint
+        _latest_values["control_mode"] = 1.0
+        _latest_values["control_run"] = 1.0
+        _latest_values["rs_prog_type"] = 1.0
+        _latest_values["rs_prn_exec"] = 1.0
+
+
+def _start_ramp_program(segments: list):
+    """Native multi-segment Ramps and Soaks program (rs_prog_type=2), written
+    into our one dedicated program slot on the device."""
+    current_pv = _latest_values.get("process_variable")
+    if current_pv is None:
+        raise RuntimeError("no current process variable reading available yet")
+
+    device.write(config.CONTROLS_BY_KEY["control_run"], False)
+    device.write(_program_register(0), 0)  # PTOL: no tolerance wait
+    device.write(_program_register(1), 0)  # LP: no chained program
+    device.write(_program_register(2), round(current_pv))  # PSP0: start from current PV
+
+    for i in range(_MAX_PROGRAM_SEGMENTS):
+        base = 3 + i * 3
+        if i < len(segments):
+            minutes = max(1, round(segments[i]["minutes"]))
+            setpoint = round(segments[i]["setpoint"])
+        else:
+            minutes = 0  # zero-time segment marks end of program
+            setpoint = 0
+        device.write(_program_register(base), minutes)
+        device.write(_program_register(base + 1), 0)  # event: none
+        device.write(_program_register(base + 2), setpoint)
+
+    device.write(config.REGISTERS_BY_KEY["rs_prog_type"], 2)
+    device.write(config.CONTROLS_BY_KEY["control_mode"], True)
+    device.write(config.REGISTERS_BY_KEY["rs_prn_exec"], _PROGRAM_SLOT)
+    device.write(config.CONTROLS_BY_KEY["control_run"], True)
+
+    with _state_lock:
+        _latest_values["setpoint"] = segments[-1]["setpoint"]
+        _latest_values["control_mode"] = 1.0
+        _latest_values["control_run"] = 1.0
+        _latest_values["rs_prog_type"] = 2.0
+        _latest_values["rs_prn_exec"] = float(_PROGRAM_SLOT)
+
+
+def _start_native_run(setpoint: float, duration_hours: float, segments: list | None):
+    if segments:
+        _start_ramp_program(segments)
+    else:
+        _start_simple_run(setpoint, duration_hours)
 
 
 def _poll_once():
@@ -95,7 +179,19 @@ def _check_active_run_expiry():
 
     run_value = _latest_values.get("control_run")
     if run_value is not None and run_value < 0.5:
+        try:
+            _disarm_native_program()
+        except Exception:
+            logger.exception(
+                "finished preset '%s' but failed to disarm the native program - "
+                "will retry next cycle",
+                active["preset_name"],
+            )
+            return
         db.clear_active_run()
+        with _state_lock:
+            _latest_values["rs_prog_type"] = 0.0
+            _latest_values["rs_prn_exec"] = 0.0
         logger.info("preset '%s' finished (device reported run stopped)", active["preset_name"])
         return
 
@@ -216,19 +312,45 @@ def set_control(key: str, body: dict):
     return {"ok": True, "key": key, "value": value}
 
 
+def _validate_segments(raw_segments):
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise HTTPException(422, "segments must be a non-empty list")
+    if len(raw_segments) > _MAX_PROGRAM_SEGMENTS:
+        raise HTTPException(422, f"a ramp program supports at most {_MAX_PROGRAM_SEGMENTS} segments")
+    segments = []
+    for i, seg in enumerate(raw_segments):
+        try:
+            setpoint = float(seg["setpoint"])
+            minutes = float(seg["minutes"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(422, f"segment {i + 1}: setpoint and minutes must be numbers") from None
+        if minutes <= 0:
+            raise HTTPException(422, f"segment {i + 1}: minutes must be positive")
+        segments.append({"setpoint": setpoint, "minutes": minutes})
+    return segments
+
+
 def _validate_preset_body(body: dict):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(422, "name is required")
     folder = (body.get("folder") or "").strip() or None
+
+    raw_segments = body.get("segments")
+    if raw_segments:
+        segments = _validate_segments(raw_segments)
+        setpoint = segments[-1]["setpoint"]
+        duration_hours = sum(s["minutes"] for s in segments) / 60
+        return name, folder, setpoint, duration_hours, segments
+
     try:
         setpoint = float(body["setpoint"])
         duration_hours = float(body["duration_hours"])
     except (KeyError, TypeError, ValueError):
-        raise HTTPException(422, "setpoint and duration_hours must be numbers")
+        raise HTTPException(422, "setpoint and duration_hours must be numbers") from None
     if duration_hours <= 0:
         raise HTTPException(422, "duration_hours must be positive")
-    return name, folder, setpoint, duration_hours
+    return name, folder, setpoint, duration_hours, None
 
 
 @app.get("/api/presets")
@@ -238,9 +360,9 @@ def list_presets():
 
 @app.post("/api/presets")
 def create_preset(body: dict):
-    name, folder, setpoint, duration_hours = _validate_preset_body(body)
+    name, folder, setpoint, duration_hours, segments = _validate_preset_body(body)
     try:
-        preset_id = db.create_preset(name, folder, setpoint, duration_hours)
+        preset_id = db.create_preset(name, folder, setpoint, duration_hours, segments)
     except sqlite3.IntegrityError:
         raise HTTPException(409, f"a preset named '{name}' already exists") from None
     return db.get_preset(preset_id)
@@ -250,9 +372,9 @@ def create_preset(body: dict):
 def update_preset(preset_id: int, body: dict):
     if db.get_preset(preset_id) is None:
         raise HTTPException(404, "unknown preset")
-    name, folder, setpoint, duration_hours = _validate_preset_body(body)
+    name, folder, setpoint, duration_hours, segments = _validate_preset_body(body)
     try:
-        db.update_preset(preset_id, name, folder, setpoint, duration_hours)
+        db.update_preset(preset_id, name, folder, setpoint, duration_hours, segments)
     except sqlite3.IntegrityError:
         raise HTTPException(409, f"a preset named '{name}' already exists") from None
     return db.get_preset(preset_id)
@@ -297,43 +419,47 @@ def start_run(preset_id: int):
     if preset is None:
         raise HTTPException(404, "unknown preset")
 
-    setpoint_item = config.CONTROLS_BY_KEY["setpoint"]
-    scale = setpoint_item.get("scale", 1)
-    raw_setpoint = round(preset["setpoint"] / scale)
-    soak_minutes = max(1, round(preset["duration_hours"] * 60))
-
     try:
-        # Stop anything in progress first for a clean, predictable (re)start.
-        device.write(config.CONTROLS_BY_KEY["control_run"], False)
-        device.write(setpoint_item, raw_setpoint)
-        device.write(config.REGISTERS_BY_KEY["rs_tbas"], _NATIVE_TBAS_MINUTES)
-        device.write(config.REGISTERS_BY_KEY["rs_timer_soak"], soak_minutes)
-        device.write(config.REGISTERS_BY_KEY["rs_prog_type"], 1)  # Ramp to Soak
-        device.write(config.CONTROLS_BY_KEY["control_mode"], True)  # Automatic, needed to drive output
-        device.write(config.REGISTERS_BY_KEY["rs_prn_exec"], 1)  # arm/start execution
-        device.write(config.CONTROLS_BY_KEY["control_run"], True)
+        _start_native_run(preset["setpoint"], preset["duration_hours"], preset["segments"])
     except Exception as e:
         logger.exception("failed to start preset '%s'", preset["name"])
-        raise HTTPException(502, f"write to device failed: {e}") from None
+        raise HTTPException(502, f"failed to start: {e}") from None
 
     started_at = time.time()
     db.set_active_run(
         preset["id"], preset["name"], preset["setpoint"], preset["duration_hours"], started_at
     )
 
-    with _state_lock:
-        _latest_values["setpoint"] = preset["setpoint"]
-        _latest_values["control_mode"] = 1.0
-        _latest_values["control_run"] = 1.0
-        _latest_values["rs_prog_type"] = 1.0
-        _latest_values["rs_prn_exec"] = 1.0
-
     logger.info(
-        "started preset '%s' on native Ramp to Soak: setpoint=%s soak=%s min",
+        "started preset '%s': setpoint=%s duration=%.2fh%s",
         preset["name"],
         preset["setpoint"],
-        soak_minutes,
+        preset["duration_hours"],
+        f" ({len(preset['segments'])} segments)" if preset["segments"] else "",
     )
+    return _active_run_response(db.get_active_run())
+
+
+@app.post("/api/run/start_adhoc")
+def start_adhoc_run(body: dict):
+    try:
+        setpoint = float(body["setpoint"])
+        duration_hours = float(body["duration_hours"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "setpoint and duration_hours must be numbers") from None
+    if duration_hours <= 0:
+        raise HTTPException(422, "duration_hours must be positive")
+
+    try:
+        _start_native_run(setpoint, duration_hours, None)
+    except Exception as e:
+        logger.exception("failed to start simple run")
+        raise HTTPException(502, f"failed to start: {e}") from None
+
+    started_at = time.time()
+    db.set_active_run(None, "Simple Run", setpoint, duration_hours, started_at)
+
+    logger.info("started simple run: setpoint=%s duration=%.2fh", setpoint, duration_hours)
     return _active_run_response(db.get_active_run())
 
 

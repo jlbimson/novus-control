@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 
@@ -31,7 +32,11 @@ CREATE TABLE IF NOT EXISTS active_run (
 );
 """
 
-_PRESET_COLUMNS = ["id", "name", "folder", "setpoint", "duration_hours", "created_at", "updated_at"]
+# segments (presets table only): JSON text, a list of {"setpoint": C, "minutes": int}
+# ramp-program steps, or NULL for a plain single setpoint+duration preset.
+_PRESET_COLUMNS = [
+    "id", "name", "folder", "setpoint", "duration_hours", "segments", "created_at", "updated_at",
+]
 _ACTIVE_RUN_COLUMNS = ["preset_id", "preset_name", "setpoint", "duration_hours", "started_at"]
 
 
@@ -48,6 +53,8 @@ def init_db():
         cols = {row[1] for row in conn.execute("PRAGMA table_info(presets)")}
         if "folder" not in cols:
             conn.execute("ALTER TABLE presets ADD COLUMN folder TEXT")
+        if "segments" not in cols:
+            conn.execute("ALTER TABLE presets ADD COLUMN segments TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -81,11 +88,17 @@ def history(key: str, since_ts: float):
         conn.close()
 
 
+def _preset_row_to_dict(row):
+    d = dict(zip(_PRESET_COLUMNS, row))
+    d["segments"] = json.loads(d["segments"]) if d["segments"] else None
+    return d
+
+
 def list_presets():
     conn = _connect()
     try:
         cur = conn.execute(f"SELECT {', '.join(_PRESET_COLUMNS)} FROM presets ORDER BY name")
-        return [dict(zip(_PRESET_COLUMNS, row)) for row in cur.fetchall()]
+        return [_preset_row_to_dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -97,19 +110,22 @@ def get_preset(preset_id: int):
             f"SELECT {', '.join(_PRESET_COLUMNS)} FROM presets WHERE id = ?", (preset_id,)
         )
         row = cur.fetchone()
-        return dict(zip(_PRESET_COLUMNS, row)) if row else None
+        return _preset_row_to_dict(row) if row else None
     finally:
         conn.close()
 
 
-def create_preset(name: str, folder: str | None, setpoint: float, duration_hours: float) -> int:
+def create_preset(
+    name: str, folder: str | None, setpoint: float, duration_hours: float, segments: list | None
+) -> int:
     now = time.time()
+    segments_json = json.dumps(segments) if segments else None
     conn = _connect()
     try:
         cur = conn.execute(
-            "INSERT INTO presets (name, folder, setpoint, duration_hours, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, folder, setpoint, duration_hours, now, now),
+            "INSERT INTO presets (name, folder, setpoint, duration_hours, segments, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, folder, setpoint, duration_hours, segments_json, now, now),
         )
         conn.commit()
         return cur.lastrowid
@@ -117,13 +133,21 @@ def create_preset(name: str, folder: str | None, setpoint: float, duration_hours
         conn.close()
 
 
-def update_preset(preset_id: int, name: str, folder: str | None, setpoint: float, duration_hours: float):
+def update_preset(
+    preset_id: int,
+    name: str,
+    folder: str | None,
+    setpoint: float,
+    duration_hours: float,
+    segments: list | None,
+):
+    segments_json = json.dumps(segments) if segments else None
     conn = _connect()
     try:
         conn.execute(
-            "UPDATE presets SET name = ?, folder = ?, setpoint = ?, duration_hours = ?, updated_at = ? "
-            "WHERE id = ?",
-            (name, folder, setpoint, duration_hours, time.time(), preset_id),
+            "UPDATE presets SET name = ?, folder = ?, setpoint = ?, duration_hours = ?, "
+            "segments = ?, updated_at = ? WHERE id = ?",
+            (name, folder, setpoint, duration_hours, segments_json, time.time(), preset_id),
         )
         conn.commit()
     finally:
